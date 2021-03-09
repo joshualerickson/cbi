@@ -1,0 +1,198 @@
+---
+title: "Comparing CBI and MTBS"
+author: "Josh Erickson"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+bibliography: cbi_mtbs.bib
+---
+
+```{r, include = FALSE}
+library(sf)
+library(tidyverse)
+library(stars)
+library(patchwork)
+library(cvms)
+theme_set(theme_bw())
+trace(grDevices::png, quote({
+  if (missing(type) && missing(antialias)) {
+    type <- "cairo-png"
+    antialias <- "subpixel"
+  }
+}), print = FALSE)
+```
+
+## Introduction
+
+This is a look into the variance between Composite Burn Index (CBI) [@miller2007; @parks2019] and Monitoring Trends Burn Severity (MTBS) [@finco2012monitoring] on four fires (Caribou, Sheep Gap, Lolo Peak, Rice Ridge) within Region 1. The date range of the fires were from 2015 to 2017 and were west of the divide (see Figure Below).
+
+```{r, warning = FALSE,message = FALSE, echo=F, fig.align='center'}
+library(sf)
+library(tidyverse)
+
+fire_15_cbi <- read_sf('cbi_test/fire_15_cbi.shp') %>% filter(!Fire_ID %in% c(219, 176, 213)) %>% mutate(Fire_Name = c("Lolo Peak", "Rice Ridge","Sheep Gap", "Caribou"),
+                                                                                                          area = units::set_units(st_area(geometry), 'acre')) 
+states <- AOI::aoi_get(state = c("Montana"))
+missoula <- AOI::geocode("Missoula, Montana", pt = T)
+
+p1 <- ggplot() + geom_sf(data = states, fill = NA) + 
+  geom_sf(data = st_transform(fire_15_cbi, 4326), aes(fill = Fire_Name))+
+  geom_sf(data = missoula) +
+  ggrepel::geom_text_repel(data = missoula, aes(label = request, geometry = geometry),
+                           stat = "sf_coordinates",nudge_x = -.5, nudge_y = .15,
+                           size = 3) +
+  scale_fill_manual(values = c("#D55E00", "#009E73", "#56B4E9", "#E69F00")) + 
+  labs(fill = "Fire Name", x = 'Longitude', y = 'Latitude')+
+  coord_sf(xlim = c(-116, -113), ylim = c(46, 49.1)) + theme_void()
+  
+p2 <- ggplot() + geom_sf(data = fire_15_cbi[fire_15_cbi$Fire_ID == 77,], fill = "#009E73") + ggrepel::geom_label_repel(
+    data = st_transform(fire_15_cbi[fire_15_cbi$Fire_ID == 77,], 4326),
+    aes(label = paste('Fire Year: ', Fire_Year, '\n ', scales::comma(round(as.numeric(area),0), 1), 'acres'), geometry = geometry),size = 2.5,
+    stat = "sf_coordinates", force = 30, inherit.aes = F
+  ) +theme_void() 
+p3 <- ggplot() + geom_sf(data = fire_15_cbi[fire_15_cbi$Fire_ID == 82,], fill = "#56B4E9") + ggrepel::geom_label_repel(
+    data = st_transform(fire_15_cbi[fire_15_cbi$Fire_ID == 82,], 4326),
+    aes(label = paste('Fire Year: ', Fire_Year, '\n ', scales::comma(round(as.numeric(area),0), 1), 'acres'), geometry = geometry),size = 2.5,
+    stat = "sf_coordinates", force = 30, inherit.aes = F
+  ) +theme_void()
+p4 <- ggplot() + geom_sf(data = fire_15_cbi[fire_15_cbi$Fire_ID == 553,], fill = "#D55E00") + ggrepel::geom_label_repel(
+    data = st_transform(fire_15_cbi[fire_15_cbi$Fire_ID == 553,], 4326),
+    aes(label = paste('Fire Year: ', Fire_Year, '\n ', scales::comma(round(as.numeric(area),0), 1), 'acres'), geometry = geometry),size = 2.5,
+    stat = "sf_coordinates", force = 30, inherit.aes = F
+  ) +theme_void()
+p5 <- ggplot() + geom_sf(data = fire_15_cbi[fire_15_cbi$Fire_ID == 498,], fill = "#E69F00") + ggrepel::geom_label_repel(
+    data = st_transform(fire_15_cbi[fire_15_cbi$Fire_ID == 498,], 4326),
+    aes(label = paste('Fire Year: ', Fire_Year, '\n ', scales::comma(round(as.numeric(area),0), 1), 'acres'), geometry = geometry),size = 2.5,
+    stat = "sf_coordinates", force = 30, inherit.aes = F
+  ) +theme_void()
+
+(p4 + p2)/(p3 + p5) | p1  + patchwork::plot_layout(guides = 'collect')  
+```
+
+## Methods
+
+The methods that were used in this analysis were random sampling and extraction. The idea was to sample each of the fires randomly and extract the burn index classification (e.g. low, moderate, high) from those samples. From this, we could then compare and contrast the results via a confusion matrix, i.e. predicted vs target.
+
+## Analysis
+
+Below is the analysis section of the report. First we'll want to create random samples (points) across each of the fires. We'll need to bring in a fire perimeter to use as our sample space and then we can sample.
+
+```{r, eval = FALSE}
+fire_15_cbi <- read_sf('cbi_test/fire_15_cbi.shp') %>% 
+  filter(!Fire_ID %in% c(219, 176, 213)) %>% 
+  mutate(Fire_Name = c("Lolo Peak", "Rice Ridge","Sheep Gap", "Caribou"),
+         area = units::set_units(st_area(geometry), 'acre')) 
+
+```
+
+Now sample 10,000 points across these areas.
+
+```{r}
+smp_points <- st_sample(fire_15_cbi, 10000) %>% st_as_sf()
+
+```
+
+Now bring in the MTBS and CBI data and extract from the sample points `smp_points`.
+
+```{r, warning = FALSE,message = FALSE}
+mtbs_mosaic <- raster::raster('cbi_test/mtbs_mosaic.tif')
+cbi_mosaic <- raster::raster('cbi_test/cbi_rc.tif') 
+
+smp_points$mtbs <- raster::extract(mtbs_mosaic, smp_points)
+smp_points$cbi <- raster::extract(cbi_mosaic, smp_points)
+
+```
+
+
+## Results 
+
+Now we can compare and contrast with a confusion matrix.
+
+```{r}
+smp_points_df <- smp_points %>% st_drop_geometry() %>% filter(!is.na(cbi), !is.na(mtbs), mtbs >= 2, mtbs <=4) %>% mutate(across(c('mtbs', 'cbi'), as.character))
+
+# old school
+table(smp_points_df)
+
+
+```
+
+**cbi = target and mtbs = prediction**
+```{r, warning = FALSE,message = FALSE, echo=F}
+eval <- evaluate(smp_points_df,
+                 target_col = "cbi",
+                 prediction_cols = "mtbs",
+                 type = "multinomial")
+
+conf_mat <- eval$`Confusion Matrix`[[1]]
+
+plot_confusion_matrix(conf_mat)
+```
+
+Now let's see what the biased corrected product looks like with CBI.
+
+```{r, warning = FALSE,message = FALSE}
+caribou_bc <- raster::raster('cbi_test/553_CBI_bc.tif')
+rice_bc <- raster::raster('cbi_test/82_CBI_bc.tif')
+lolo_bc <- raster::raster('cbi_test/77_CBI_bc.tif')
+sheep_bc <- raster::raster('cbi_test/498_CBI_bc.tif')
+
+cbi_bc_mosaic <- raster::mosaic(caribou_bc, rice_bc, lolo_bc, sheep_bc, fun = min)
+
+smp_points$cbi_bc <- raster::extract(cbi_bc_mosaic, smp_points)
+```
+
+Now we can re-create the data.frame with cbi biased corrected added.
+
+```{r}
+smp_points_df <- smp_points %>% st_drop_geometry() %>% filter(!is.na(cbi), !is.na(mtbs), !is.na(cbi_bc), mtbs >= 2, mtbs <=4) %>% mutate(across(c('mtbs', 'cbi'), as.character))
+
+```
+
+This gives us the ability to explore different thresholds. The thresholds I used for CBI in this analysis were;
+
+-   0 -- 0.1 unburned,
+-   0.1 -- 1.24 Low severity,
+-   1.25 -- 2.24 Moderate Severity,
+-   2.25 -- 3 High Severity
+
+```{r}
+
+p1 <- smp_points_df %>% ggplot() + geom_point(aes(cbi_bc, mtbs)) 
+plotly::ggplotly(p1)
+```
+
+
+Then we can reclassify. 
+
+```{r}
+smp_points_df <- smp_points_df %>% mutate(cbi_bc_rc = ifelse(cbi_bc <= 3 & cbi_bc >= 2.25, '4',
+                                                             ifelse(cbi_bc < 2.25 & cbi_bc >= 1.25, '3', 
+                                                                    ifelse(cbi_bc < 1.25 & cbi_bc >= .1, '2', NA))))
+
+table(cbi = smp_points_df$cbi, cbi_bc = smp_points_df$cbi_bc_rc)
+table(cbi_bc = smp_points_df$cbi_bc_rc, mtbs = smp_points_df$mtbs)
+table(cbi = smp_points_df$cbi, mtbs = smp_points_df$mtbs)
+```
+
+One final confusion matrix... This time **cbi_bc = target and mtbs = prediction**.
+
+```{r, warning = FALSE,message = FALSE, echo = F}
+
+eval <- evaluate(smp_points_df,
+                 target_col = "cbi_bc_rc",
+                 prediction_cols = "mtbs",
+                 type = "multinomial")
+
+conf_mat <- eval$`Confusion Matrix`[[1]]
+
+plot_confusion_matrix(conf_mat)
+```
+
+## Discussion
+
+It looks like the regular CBI does better than the bias corrected CBI when compared to MTBS. I think more investigation would be necessary but for now I suggest using the CBI as it's closest to the standard MTBS method.
+
+## Reference
