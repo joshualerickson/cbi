@@ -3,7 +3,11 @@ https://code.earthengine.google.com/72ecd009161da42628828486d6752203
 
 
 
+// You'll need to import a feature collection with appropriate
+// column names. See 'prepping_cbi.R' for more details.
 
+// Also, you'll need to add a geometry (geom) that encapsulates
+// the area of interests.
 
 // Script to develop and export maps of Composite Burn Index (CBI) predictions, and spectral imagery that
 // supports the CBI predictions, for fires in North America.
