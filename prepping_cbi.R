@@ -51,12 +51,12 @@ glimpse(wcc_cbi)
 
 wcc_cbi_df <- wcc_cbi %>% st_drop_geometry()
 
-
-
+getwd()
 wcc_cbi_df %>% ggplot(aes(per_all)) + geom_density()
 
 
 st_write(wcc_cbi,dsn = 'cbi_test/wcc_cbi.shp', layer = 'wcc_cbi', driver = 'ESRI Shapefile')
+
 wcc_cbi <- read_sf('cbi_test/wcc_cbi.shp') %>% rename(sum_high = 'sum_hgh',
                                                       high_acres = 'hgh_crs',
                                                       mod_acres = 'mod_crs',
@@ -65,6 +65,11 @@ wcc_cbi <- read_sf('cbi_test/wcc_cbi.shp') %>% rename(sum_high = 'sum_hgh',
 #write gpkg
 st_write(wcc_cbi,dsn = paste0(path, '/Josh.gpkg'),
          layer = 'cbi_bc_final', driver = 'GPKG')
+
+#read in (if needed)
+path <- 'T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/Josh'
+
+wcc_cbi <- read_sf(paste0(path, '/Josh.gpkg'), layer = 'cbi_bc_final')
 
 # look at a distributions
 lines <- data.frame(vlines = c(134, 1579, 6040,22549,262046),
@@ -101,3 +106,17 @@ trace(grDevices::png, quote({
 
 #quantiles of the sum
 quantile(wcc_cbi$sum, probs = seq(0,1,.05), na.rm = TRUE)
+
+#view quantile breaks
+
+wcc_cbi %>% st_drop_geometry() %>%  mutate(breaks = ifelse(sum < 134, '<80%',ifelse(
+  sum >= 134 & sum < 1579, '80-85%', ifelse(
+    sum >= 1579 & sum < 6040, '85-90%', ifelse(
+      sum >= 6040 & sum < 22549, '90-95%', ifelse(
+        sum >= 22549, '>95%', "NA"))))),
+  breaks = fct_relevel(breaks, c('<80%', '80-85%', '85-90%', '90-95%', '>95%' ))) %>% group_by(breaks) %>%
+  summarise(break_count = n()) %>%
+  ggplot(aes(breaks, break_count)) +
+  geom_col() +
+  labs(y = 'count', x = 'percentiles', title = 'Count per break in percentiles of summed CBI per HUC 12') +
+  geom_point() + ggrepel::geom_label_repel(aes(label = break_count))
