@@ -68,9 +68,12 @@ st_write(wcc_cbi,dsn = paste0(path, '/Josh.gpkg'),
 
 #read in (if needed)
 path <- 'T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/Josh'
+library(arcgisbinding)
+arc.check_product()
 
-wcc_cbi <- read_sf(paste0(path, '/Josh.gpkg'), layer = 'cbi_bc_final')
+wcc_cbi <- arc.open(paste0(path, '/josh_wcc.gpkg/cbi_bc_final'))
 
+wcc_cbi <- arc.data2sf(wcc_cbi)
 # look at a distributions
 lines <- data.frame(vlines = c(134, 1579, 6040,22549,262046),
                     labels = c("80%", "85%", "90%", "95%", "100%"))

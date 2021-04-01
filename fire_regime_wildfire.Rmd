@@ -1,0 +1,172 @@
+---
+title: "Fire Regime or Wildfire"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+bibliography: cbi_mtbs.bib
+---
+
+```{r setup, include=FALSE}
+library(rgee)
+ee_Initialize(email = "joshualerickson@gmail.com", gcs = TRUE)
+library(sf)
+library(stars)
+library(raster)
+library(tidyverse)
+library(AOI)
+library(prettydoc)
+library(patchwork)
+library(mapview)
+library(scales)
+library(arcgisbinding)
+arc.check_product()
+resourceviz::light_and_cairo()
+```
+
+# Introduction  
+
+Below is a workflow used to create a *fire regime or wildfire* raster (2011-2019) for the Watershed Condition Class (WCC) analysis in USDA-USFS Region 1. The workflow leverages Google Earth Engine (GEE)  [@gorelick2017google] to get large remote sensing products fast and easy. This allows for reproducibility in the future as well as quick return times for clients, i.e. making large requests managable. The analysis uses the Composite Burn Index (CBI) [@key2006landscape] and algorithm by [@parks2019] to create a raster of burn severity. The workflow will go through code in R [@R] using the `rgee` package [@rgee] which does all of the heavy lifting; however, it is essentially eeCodeEditor/JavaScript and if you want to do this workflow in earth engine code editor then please use this [<b>link</b>](https://code.earthengine.google.com/72ecd009161da42628828486d6752203). Also, the code is housed on github at this [<b>link</b>](https://github.com/joshualerickson/cbi) if you wanted the scripts via file. The rest of the report will be mostly code and workflow, so you have been warned.
+
+
+# Workflow
+
+Libraries we'll use.
+```{r, eval = F}
+library(rgee)
+ee_Initialize(email = "joshualerickson@gmail.com", gcs = TRUE)
+library(sf)
+library(stars)
+library(raster)
+library(tidyverse)
+library(AOI)
+library(exactextractr)
+library(patchwork)
+library(mapview)
+library(scales)
+library(arcgisbinding)
+arc.check_product()
+```
+
+The main part of this analysis uses the work done by @parks2019 via GEE. It essentially learns from years of CBI data collected across North America and from this predicts CBI where we had fires across the region from 2015-2019 using a algorithm in GEE. All that the code requires is some specific syntax and a feature class with fire perimeters. That's it! 
+
+First we want to prep the fire perimeter feature class so that we can use in earth engine. 
+
+```{r, eval = F}
+# taken from T:drive
+fire_11_19 <- read_sf('cbi_test/fire_2011_present.shp')
+
+# this creates the correct syntax for the columns
+fire_15_all <- fire_11_19 %>% filter(FIREYEAR >= 2015) %>% st_transform(4326) %>%
+  select(Fire_Year = "FIREYEAR",Fire_Name = "FIRENAME") %>%
+  mutate(Start_Day = 182, End_Day = 273,
+         Fire_ID = row_number())
+
+# now write so we can use in GEE
+st_write(fire_15_all, dsn = 'cbi_test', layer = 'fire_15_all',
+         driver = 'ESRI Shapefile')
+```
+
+So we need to run the algorithm in GEE and then export the raster, see [<b>link</b>](https://code.earthengine.google.com/72ecd009161da42628828486d6752203). Once this is done, we can start to wrangle the data with the HUC 12s and finalize for the WCC. Once downloaded, we'll bring it in and reclassify using @miller2007 *Table 4* thresholds.  
+
+This gives us the ability to explore different thresholds. The thresholds I used for CBI in this analysis were;
+
+-   0 -- 0.1 unburned,
+-   0.1 -- 1.24 Low severity,
+-   1.25 -- 2.24 Moderate Severity,
+-   2.25 -- 3 High Severity  
+
+
+```{r, eval = FALSE}
+# Once downloaded, then reclassify
+
+cbi_bc_final <- raster('cbi_test/cbi_bc_R1.tif')
+cbi_bc_rc <- reclassify(cbi_bc_final, c(0,0.1,0,0.1,1.24,1,1.24,2.24,2,2.24,3,3))
+
+writeRaster(cbi_bc_rc, 'cbi_test/cbi_bc_rc.tif')
+
+#seperate into mod and high for visualisation and analysis
+cbi_bc_high <- reclassify(cbi_bc_rc, c(0,2,0, 2, 3, 1))
+
+cbi_bc_mod <- reclassify(cbi_bc_rc, c(0,1,0,1,2,1, 2, 3, 0))
+
+```
+
+Now we can start extracting these reclassified rasters by HUC 12 and then put into high or moderate severity. By doing this, we can then use high and moderate severity and total tree acres as a way to break down the watersheds, e.g. `cbi_fraction`
+
+```{r, eval = F}
+wcc_cbi <- huc12_wcc
+wcc_cbi$sum <- exact_extract(cbi_bc_rc, huc12_wcc, fun = 'sum')
+wcc_cbi$sum_high <- exact_extract(cbi_bc_high, huc12_wcc, fun = 'sum')
+wcc_cbi$sum_mod <- exact_extract(cbi_bc_mod, huc12_wcc, fun = 'sum')
+
+# this formula (x*900)/4046.8564224 converts 30x30 meter pixels to acres
+wcc_cbi <- wcc_cbi %>% mutate(high_acres = (sum_high*900)/4046.8564224,
+                              mod_acres = (sum_mod*900)/4046.8564224,
+                              acres = as.numeric(units::set_units(st_area(.), 'acre')),
+                              per_high = high_acres/acres,
+                              per_mod = mod_acres/acres,
+                              cbi_fraction = (high_acres+mod_acres)/acres)
+```
+
+We can convert to a `data.frame` and start looking at graphs of how the data is distributed across the region, e.g. `cbi_fraction = (high_acres+mod_acres)/acres`.
+
+```{r, echo = F, warning=F, message=F}
+
+path <- 'T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/Josh'
+wcc_cbi <- arc.open(paste0(path, '/josh_wcc.gdb/cbi_bc_final'))
+
+wcc_cbi <- arc.data2sf(arc.select(wcc_cbi))
+
+wcc_cbi %>% st_drop_geometry() %>% filter(per_all > 0) %>% 
+  ggplot(aes(per_all)) + geom_density(lwd = 2) +
+  theme_bw() + geom_text(aes(0.5,.05, label = "0.5"), hjust = 1.5) +
+  scale_x_log10(labels = scales::comma) + geom_vline(xintercept = 0.5) + 
+  labs(title = "Distribution of CBI Fraction per HUC 12",
+       subtitle = '(high_acres + mod_acres) / total HUC12 acres', 
+       x = 'CBI Fraction (log-scaled)')
+```
+
+Ok, well we can see that most of the watersheds are below 50% total burned area. The next step involves classifying into ratings, which was done by Regional Hydrologist Andy Efta, here's the logic below:
+
+CBI was run for all R1 fires from 2015-2019. Gridded “moderate” and “high” severity values were summed across HUC12s and divided by HUC12 area to come up with a normalized value. Attribute classes were assigned as follows: 
+
+Class 1: No CBI data; no fire effects incurred since 2015 
+
+Class 2: Normalized CBI values greater than zero and less or equal to the 95th percentile value 
+
+Class 3: Normalized CBI values greater than the 95th percentile value. 
+
+So we'll read-in that data and then make a final feature class after some renaming and reducing some attributes. 
+
+```{r}
+# finally, bring in the quality controlled results for the ratings
+andys_cbi <- read_sf('T:/FS/NFS/R01/Program/2500WatershedAirMgmt/GIS/WorkSpace/jefta/WCC_reassessment/CBI_bc_copy1.shp')
+
+#now we can write them to the final gdb after fixing some ambiguous attribute names.
+
+andys_cbi <- andys_cbi %>% rename(sum_high = 'sum_hgh', high_acres = 'hgh_crs', 
+                                  mod_acres = 'mod_crs', fraction_high = 'per_hgh',
+                                  fraction_mod = 'per_mod', cbi_fraction = 'per_all',
+                                  class_fire_regime_wildfire = 'Rate_1') %>% 
+  select(HUC_12, HU_12_N, sum_high, sum_mod, mod_acres, high_acres, fraction_high, fraction_mod, cbi_fraction, class_fire_regime_wildfire)
+
+# write to final gdb
+#arc.write("T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/OutputDatasets_Review.gdb/fire_regime_wildfire", data = andys_cbi, overwrite = TRUE, validate = TRUE)
+```
+```{r}
+quantile(andys_cbi$cbi_fraction, probs = seq(0,1,.05), na.rm = TRUE)
+```
+
+Now we can visualise with a map. That's all.
+
+```{r, echo =F, warning=F, message=F}
+m1 <- mapview(andys_cbi, zcol = 'class_fire_regime_wildfire',col.regions = c('green', 'yellow', 'red'))
+m1@map
+```
+
+## References
+
+
+
+
