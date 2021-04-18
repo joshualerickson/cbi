@@ -3,6 +3,8 @@ ee_Initialize()
 library(sf)
 library(raster)
 library(tidyverse)
+library(arcgisbinding)
+arc.check_product()
 
 #prepping fire data for cbi in Earth Engine
 
@@ -51,29 +53,16 @@ glimpse(wcc_cbi)
 
 wcc_cbi_df <- wcc_cbi %>% st_drop_geometry()
 
-getwd()
-wcc_cbi_df %>% ggplot(aes(per_all)) + geom_density()
-
-
-st_write(wcc_cbi,dsn = 'cbi_test/wcc_cbi.shp', layer = 'wcc_cbi', driver = 'ESRI Shapefile')
-
-wcc_cbi <- read_sf('cbi_test/wcc_cbi.shp') %>% rename(sum_high = 'sum_hgh',
-                                                      high_acres = 'hgh_crs',
-                                                      mod_acres = 'mod_crs',
-                                                      per_high = 'per_hgh')
-
-#write gpkg
-st_write(wcc_cbi,dsn = paste0(path, '/Josh.gpkg'),
-         layer = 'cbi_bc_final', driver = 'GPKG')
-
-#read in (if needed)
 path <- 'T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/Josh'
-library(arcgisbinding)
-arc.check_product()
+arc.write(paste0(path, '/josh_wcc.gdb/cbi_bc_final'), data = wcc_cbi)
 
-wcc_cbi <- arc.open(paste0(path, '/josh_wcc.gpkg/cbi_bc_final'))
+# here we'll start exploring the data.
+#read in (if needed)
 
-wcc_cbi <- arc.data2sf(wcc_cbi)
+
+wcc_cbi <- arc.open(paste0(path, '/josh_wcc.gdb/cbi_bc_final'))
+
+wcc_cbi <- arc.data2sf(arc.select(wcc_cbi))
 # look at a distributions
 lines <- data.frame(vlines = c(134, 1579, 6040,22549,262046),
                     labels = c("80%", "85%", "90%", "95%", "100%"))
@@ -123,3 +112,19 @@ wcc_cbi %>% st_drop_geometry() %>%  mutate(breaks = ifelse(sum < 134, '<80%',ife
   geom_col() +
   labs(y = 'count', x = 'percentiles', title = 'Count per break in percentiles of summed CBI per HUC 12') +
   geom_point() + ggrepel::geom_label_repel(aes(label = break_count))
+
+
+
+# finally, bring in the quality controlled results for the ratings
+andys_cbi <- read_sf('T:/FS/NFS/R01/Program/2500WatershedAirMgmt/GIS/WorkSpace/jefta/WCC_reassessment/CBI_bc_copy1.shp')
+
+#now we can write them to the final gdb after fixing some ambiguous attribute names.
+andys_cbi <- andys_cbi %>% rename(sum_high = 'sum_hgh', high_acres = 'hgh_crs',
+                                  mod_acres = 'mod_crs', fraction_high = 'per_hgh',
+                                  fraction_mod = 'per_mod', cbi_fraction = 'per_all',
+                                  class_fire_regime_wildfire = 'Rate_1') %>%
+  select(HUC_12, HU_12_N, acres, sum_high, sum_mod, mod_acres, high_acres, fraction_high, fraction_mod, cbi_fraction, class_fire_regime_wildfire)
+
+
+arc.write("T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/OutputDatasets_Review.gdb/fire_regime_wildfire", data = andys_cbi, overwrite = TRUE, validate = TRUE)
+quantile(andys_cbi$cbi_fraction, probs = seq(0,1,.05), na.rm = TRUE)
