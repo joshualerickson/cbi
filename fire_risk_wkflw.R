@@ -73,3 +73,10 @@ glimpse(final_fire_risk)
 
 arc.write(path = 'T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/OutputDatasets_Review.gdb/WCC_HUC12_r1_FireRisk_Rating', data = final_fire_risk,
           validate = TRUE)
+
+# now add to main feature
+final_fire_risk_main <- left_join(final_wcc_reassessment,
+                             final_fire_risk_sf %>% select(WldFireRegRisk_Class = 'risk_class', HUC_12) %>% st_drop_geometry())
+
+arc.write(path = 'T:/FS/NFS/R01/Program/7140Geometronics/GIS/Project/zz_R1WCC_Jan2021/Data/OutputDatasets_Review.gdb/Final_WCC_Reassessment', data = final_fire_risk_main,
+          overwrite = T, validate = T)
